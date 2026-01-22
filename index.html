@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive coral depth resilience model</title>
+  <!--
+  ----------------------------------------------------------------------------
+  README - purpose and structure
+  ----------------------------------------------------------------------------
+  This single page app is a transparent toy model that links three depth dependent
+  processes on coral reefs: light availability, potential growth, and storm damage.
+  It exposes parameters with units, renders four plots, and exports the current
+  profiles as a CSV. The page is designed to be readable in a year without the
+  original context, so the code is heavily documented and the mathematical terms
+  are explained in the longform notes below.
+
+  Key ideas
+  - Light decreases roughly exponentially with depth. We use I(z) = I0 * exp(-Kd * z).
+  - Growth follows a saturating P - I curve with a heterotrophic floor g_floor.
+  - Storm damage is thresholded. Near bed orbital velocity ub(z) must exceed one
+    or more u_crit thresholds. Event frequency is Poisson with mean rate lambda.
+  - Catastrophic events add a recovery lag during which growth is suppressed.
+
+  Files and modules
+  - This is a single file. The <script> section is split into small functions.
+  - Look for the "Model maths" region for the core equations and units.
+
+  License and reuse
+  - MIT style: do what you like, please keep the documentation with the code.
+  ----------------------------------------------------------------------------
+  -->
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #141a33;
+      --ink: #e8ebff;
+      --muted: #a7b0d6;
+      --accent: #43b3ff;
+      --grid: #2a335c;
+    }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    header { padding: 24px 20px 8px; }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0.2px; }
+    p.topline { margin: 0; color: var(--muted); }
+    .wrap { display: grid; grid-template-columns: 320px 1fr; gap: 18px; padding: 10px 20px 24px; }
+    .panel { background: var(--panel); border-radius: 14px; padding: 14px; box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+    .controls { max-height: 82vh; overflow: auto; }
+    .group { border: 1px solid #1f2748; border-radius: 12px; padding: 10px; margin-bottom: 12px; }
+    .group h3 { margin: 2px 0 8px; font-size: 14px; color: var(--accent); font-weight: 600; letter-spacing: 0.2px; }
+    .ctrl { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; margin: 6px 0 10px; }
+    .ctrl label { font-size: 13px; color: var(--ink); }
+    .ctrl input[type="number"] { width: 100%; padding: 6px 8px; background: #0f1430; color: var(--ink); border: 1px solid #283261; border-radius: 8px; }
+    .hint { font-size: 12px; color: var(--muted); margin: -6px 0 6px; line-height: 1.35; }
+    .plots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+    .plot { position: relative; background: var(--panel); border-radius: 14px; padding: 10px 10px 14px; }
+    .plot h4 { margin: 4px 8px 8px; font-size: 14px; color: var(--ink); }
+    .plot p.caption { margin: 6px 8px 0; color: var(--muted); font-size: 13px; }
+    .svgwrap { width: 100%; height: 240px; }
+    .svgwrap svg { width: 100%; height: 100%; display: block; }
+    .grid line { stroke: var(--grid); stroke-width: 1; }
+    .axis path, .axis line { stroke: #6570a8; }
+    .axis text { fill: #cfd6ff; font-size: 12px; }
+    .axis-label { fill: #dfe6ff; font-size: 12px; }
+    .legend { position: absolute; top: 10px; right: 12px; background: rgba(10,14,35,0.8); border: 1px solid #26305c; border-radius: 8px; padding: 4px 8px; font-size: 12px; color: var(--ink); }
+    .legend .item { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+    .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+    .btnrow { display: flex; gap: 8px; margin-top: 10px; }
+    button { background: #1d2550; border: 1px solid #2b3570; color: var(--ink); padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+    button:hover { background: #232d66; }
+    details.model-notes { margin: 16px 0 0; background: var(--panel); border-radius: 14px; padding: 14px; }
+    details summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+    .longform { line-height: 1.55; color: var(--ink); }
+    a { color: #72c6ff; }
+    .foot { padding: 10px 20px 24px; color: var(--muted); }
+  @media (max-width: 1100px) { .plots { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Interactive coral depth resilience model</h1>
+    <p class="topline">This toy model explores whether deep reefs provide a refugia from storm damage. Deeper reefs have less wave damage, but also less light to grow. The code is available in <a href="https://github.com/open-AIMS/AIMS_Coral-depth-interactive-model" target="_blank" rel="noopener noreferrer">GitHub</a>.</p>
+  </header>
+
+  <div class="wrap">
+    <!-- Controls column -->
+    <div class="panel controls" id="controls">
+
+      <div class="group">
+        <h3>Depth range</h3>
+        <div class="ctrl"><label for="maxDepth">Maximum depth (m)</label><input id="maxDepth" type="number" step="1" min="5" max="80" value="35"></div>
+        <p class="hint">Sets the x axis range for all plots. Typical surveyable fore reef depths are 20 to 40 m.</p>
+      </div>
+
+      <div class="group">
+        <h3>Light and growth</h3>
+        <p class="hint">More light increases coral growth, up to a point (determined by half-saturation). Turbid waters decrease the available light (Kd turbid). We model two scenarios, clear and turbid for comparison. The growth is supplemented by heterotrophic growth. This model assumes annual average light conditions.</p>
+        <div class="ctrl"><label for="DLI0">Surface DLI (mol m⁻² d⁻¹)</label><input id="DLI0" type="number" step="1" min="10" max="60" value="45"></div>
+        <p class="hint">Meaning: Daily Light Integral at the surface, representing the total photosynthetically active radiation received per day averaged over the year. This value should account for typical cloud cover. GBR typical values range from 36–49 mol m⁻² d⁻¹ depending on region and season. Reduce this value for cloudier regions or seasons.</p>
+
+        <div class="ctrl"><label for="Kd">Kd clear (m⁻¹)</label><input id="Kd" type="number" step="0.01" min="0.03" max="0.30" value="0.08"></div>
+        <p class="hint">Meaning: diffuse attenuation coefficient for relatively clear oceanic water. Typical 0.05 to 0.10 m⁻¹ offshore.</p>
+
+        <div class="ctrl"><label for="KdT">Kd turbid (m⁻¹)</label><input id="KdT" type="number" step="0.01" min="0.08" max="0.60" value="0.20"></div>
+        <p class="hint">Meaning: diffuse attenuation for turbid shelf water. Typical 0.15 to 0.40 m⁻¹ on nearshore reefs.</p>
+
+        <div class="ctrl"><label for="Ik">Half-saturation Ik (mol m⁻² d⁻¹)</label><input id="Ik" type="number" step="1" min="4" max="25" value="14"></div>
+        <p class="hint">Meaning: DLI where coral growth is half of maximum. Based on GBR Acropora studies showing strong growth at 12–16 mol m⁻² d⁻¹. Using ~14 as half-saturation means growth approaches maximum around this range.</p>
+
+        <div class="ctrl"><label for="gmax">Max annual growth gmax (normalised)</label><input id="gmax" type="number" step="0.05" min="0.2" max="2" value="1.0"></div>
+        <p class="hint">Meaning: a normalised annual growth potential at full light. Units are arbitrary here but consistent across the model.</p>
+
+        <div class="ctrl"><label for="gfloor">Heterotrophic growth floor (fraction of gmax)</label><input id="gfloor" type="number" step="0.01" min="0" max="0.5" value="0.05"></div>
+        <p class="hint">Meaning: non photosynthetic feeding and other energy sources that provide a baseline growth even at low light. Typical 0.02 to 0.10 of gmax.</p>
+      </div>
+
+      <div class="group">
+        <h3>Storm sea states at reef edge</h3>
+        <p class="hint">This section models common storms (that mostly affect rubble) and typical cyclones that do not strip a reef.</p>
+        <div class="ctrl"><label for="H1">Moderate storm H (m)</label><input id="H1" type="number" step="0.1" min="0.5" max="10" value="4.0"></div>
+        <p class="hint">Meaning: height of the waves during trade-wind and monsoonal storms. Typical wave height of 2.5 to 4.5 m offshore (medium confidence).</p>
+        <div class="ctrl"><label for="T1">Moderate storm T (s)</label><input id="T1" type="number" step="0.5" min="5" max="20" value="10"></div>
+        <p class="hint">Meaning: period of the dominant waves. The longer the wave period the deeper the wave penetration. Typical values 6 - 9 s (medium confidence).</p>
+        <div class="ctrl"><label for="L1">Moderate storm frequency lambda (per yr)</label><input id="L1" type="number" step="0.05" min="0" max="5" value="0.5"></div>
+        <p class="hint">Meaning: how frequently the moderate storms occur. This uses a Poisson distribution so a setting of 1 results in a probability of 63% per year. The more severe the storm settings the less frequent they should be.</p>
+
+        <div class="ctrl"><label for="H2">Severe cyclone H (m)</label><input id="H2" type="number" step="0.1" min="0.5" max="12" value="6.0"></div>
+        <p class="hint">Meaning: height of the waves during cyclone events. Typical wave height of 4 to 7 m offshore. Can reach 10 m in deep water (medium confidence).</p>
+        <div class="ctrl"><label for="T2">Severe cyclone T (s)</label><input id="T2" type="number" step="0.5" min="6" max="25" value="12"></div>
+        <p class="hint">Meaning: period of the dominant waves. The longer the wave period the deeper the wave penetration. Typical values 10 - 16 s (medium confidence).</p>
+        <div class="ctrl"><label for="L2">Severe cyclone frequency lambda (per yr)</label><input id="L2" type="number" step="0.05" min="0" max="2" value="0.2"></div>
+        <p class="hint">Meaning: how frequently the severe cyclones occur. This uses a Poisson distribution. The more severe the storm settings the less frequent they should be.</p>
+      </div>
+
+      <div class="group">
+        <h3>Damage thresholds and severities</h3>
+        <p class="hint">This section determines how much water movement is needed to move rubble (which breaks coral), and break coral directly.</p>
+        <div class="ctrl"><label for="ucr">Rubble threshold ucrit (m s^-1)</label><input id="ucr" type="number" step="0.01" min="0.1" max="3.0" value="0.4"></div>
+        <p class="hint">Meaning: Critical shear current from waves needed to mobilise rubble. Estimated to be 0.3 to 0.5 m s^-1 (low confidence).</p>
+        <div class="ctrl"><label for="sr">Rubble transition sigma (m s^-1)</label><input id="sr" type="number" step="0.01" min="0.02" max="0.5" value="0.2"></div>
+        <p class="hint">Meaning: How sharp is the rubble threshold. 0 - represents hard threshold, 0.2 represents a broad threshold.</p>
+        <div class="ctrl"><label for="Mr">Expected loss when rubble mobilises</label><input id="Mr" type="number" step="0.05" min="0" max="1" value="0.05"></div>
+        <p class="hint">Meaning: What fraction of the coral is removed when the rubble moves. Note: The rubble areas only represent a small fraction of reefs. This represents the average over the whole reef (low confidence in the typical value).</p>
+
+        <div class="ctrl"><label for="ucb">Breakage threshold ucrit (m s^-1)</label><input id="ucb" type="number" step="0.1" min="1.5" max="5.0" value="3.0"></div>
+        <p class="hint">Meaning: The shear velocity, caused by waves, needed to break the coral into rubble. Acropora would have a much lower breakage velocity than a non-branching species.</p>
+        <div class="ctrl"><label for="sb">Breakage transition sigma (m s^-1)</label><input id="sb" type="number" step="0.05" min="0.1" max="1.0" value="0.5"></div>
+        <p class="hint">Meaning: How sharp the threshold is? A value of 0, means values below the threshold have no effect. A value of 1 means that the breakage occurs over a wide range of values.</p>
+        <div class="ctrl"><label for="Mb">Expected loss when breakage occurs</label><input id="Mb" type="number" step="0.05" min="0" max="1" value="0.6"></div>
+        <p class="hint">Meaning: Fraction of coral lost when breakage occurs. This is effectively the amount of coral lost during a cyclone.</p>
+      </div>
+
+      <div class="group">
+        <h3>Catastrophic damage and recovery lag</h3>
+        <p class="hint">This section models extreme cyclones (Cat 5) that can strip a reef to the rock. Under these conditions recovery is slower and has a lag. We include this category because while these are very infrequent these cyclones will produce larger waves that penetrate deep, undermining potential slow growing deep refugia.</p>
+        <div class="ctrl"><label for="ucc">Catastrophic threshold ucrit (m s^-1)</label><input id="ucc" type="number" step="0.1" min="3.5" max="8.0" value="5.0"></div>
+        <p class="hint">Meaning: Water velocity from waves that results in stripping back to the substrate, i.e. not just some breakage, but very high levels of damage. This should be set to a higher velocity than the typical storm threshold.</p>
+        <div class="ctrl"><label for="sc">Catastrophic transition sigma (m s^-1)</label><input id="sc" type="number" step="0.05" min="0.1" max="1.5" value="0.6"></div>
+        <p class="hint">Meaning: How sharp is the threshold. 0 - very sharp, 1 - occurs over wide range of values.</p>
+        <div class="ctrl"><label for="Mc">Expected loss when catastrophic</label><input id="Mc" type="number" step="0.05" min="0" max="1" value="0.95"></div>
+        <p class="hint">Meaning: Fraction of coral that is lost when a catastrophic event occurs.</p>
+        <div class="ctrl"><label for="lagY">Recovery lag after catastrophic (years)</label><input id="lagY" type="number" step="0.1" min="0" max="5" value="1.5"></div>
+        <p class="hint">Meaning: Number of years before the reef returns to normal recovery growth rate.</p>
+        <div class="ctrl"><label for="glag">Growth during lag (fraction of normal)</label><input id="glag" type="number" step="0.01" min="0" max="0.5" value="0.05"></div>
+        <p class="hint">Meaning: What fraction of the normal growth rate do we see during a lag period.</p>
+      </div>
+
+      <div class="btnrow">
+        <button id="resetBtn" type="button">Reset defaults</button>
+        <button id="csvBtn" type="button">Download CSV</button>
+      </div>
+    </div>
+
+    <!-- Plots column -->
+    <div>
+      <div class="plots">
+        <!-- Plot 1 -->
+        <div class="plot" id="plot1">
+          <h4>Light and growth vs depth</h4>
+          <div class="svgwrap"><svg id="svg1" width="100%" height="100%"></svg></div>
+          <p class="caption">Light decays exponentially with depth and growth follows a saturating curve, with a modest heterotrophic floor that supports some growth at low light.</p>
+          <div class="legend" id="leg1"></div>
+        </div>
+        <!-- Plot 2 -->
+        <div class="plot" id="plot2">
+          <h4>Near bed orbital velocity vs depth</h4>
+          <div class="svgwrap"><svg id="svg2" width="100%" height="100%"></svg></div>
+          <p class="caption">Wave driven near bed orbital velocity decays with depth and intersects rubble and breakage thresholds at characteristic depths that depend on wave height and period.</p>
+          <div class="legend" id="leg2"></div>
+        </div>
+        <!-- Plot 3 -->
+        <div class="plot" id="plot3">
+          <h4>Annual probability of storm induced impacts</h4>
+          <div class="svgwrap"><svg id="svg3" width="100%" height="100%"></svg></div>
+          <p class="caption">Combining event rates with threshold exceedance gives annual probabilities that fall off with depth, with breakage dropping faster than rubble motion.</p>
+          <div class="legend" id="leg3"></div>
+        </div>
+        <!-- Plot 4 -->
+        <div class="plot" id="plot4">
+          <h4>Net recovery margin vs depth</h4>
+          <div class="svgwrap"><svg id="svg4" width="100%" height="100%"></svg></div>
+          <p class="caption">The difference between growth and expected storm loss peaks at an intermediate depth rather than cancelling out across all depths. </p>
+          <div class="legend" id="leg4"></div>
+        </div>
+      </div>
+
+      <details class="model-notes" open>
+        <summary>Detailed explanation of the toy model</summary>
+        <div class="longform">
+          <p><strong>What this model shows.</strong> This interactive tool explores how coral reef resilience varies with depth. The core idea is that there may be an optimal depth range—a "refugia"—where corals are deep enough to avoid the worst storm damage, but shallow enough to receive sufficient light for growth. The four plots illustrate this trade-off:</p>
+          <ul>
+            <li><strong>Plot 1 (Light and growth vs depth):</strong> Shows how daily light (DLI) decreases exponentially with depth, and how coral growth responds. Growth follows a saturating curve—it increases with light but plateaus once light is sufficient. Clear water allows light to penetrate deeper than turbid water.</li>
+            <li><strong>Plot 2 (Near bed orbital velocity vs depth):</strong> Shows how wave energy at the seabed decreases with depth. The dashed horizontal lines mark thresholds where rubble starts moving or coral colonies break. Deeper reefs experience less wave stress.</li>
+            <li><strong>Plot 3 (Annual probability of impacts):</strong> Combines wave energy with storm frequency to show the annual probability of damage at each depth. Shallow reefs face higher probabilities of rubble mobilisation and coral breakage.</li>
+            <li><strong>Plot 4 (Net recovery margin vs depth):</strong> The key output—the difference between potential growth and expected annual loss. Where this is positive, corals can recover faster than they are damaged. The peak indicates the optimal depth refugia.</li>
+          </ul>
+          <p><strong>How to use this tool.</strong> Adjust the sliders in the left panel to explore different scenarios. Try changing water clarity (Kd), storm frequency, or wave height to see how the optimal depth shifts. The CSV export button lets you download the current profiles for further analysis.</p>
+          
+          <hr style="border-color:#2a335c; margin: 16px 0;">
+          
+          <p><strong>Technical details: Variables and units.</strong> Depth <code>z</code> in metres. Surface daily light integral <code>DLI0</code> in mol photons m⁻² d⁻¹ (total PAR received per day, averaged over the year including typical cloud cover). Diffuse attenuation coefficient <code>Kd</code> in m⁻¹. DLI at depth <code>DLI(z)</code> in the same units as <code>DLI0</code>. Half-saturation light <code>Ik</code> in mol photons m⁻² d⁻¹—the DLI at which growth is half of maximum. Maximum annual growth potential <code>gmax</code> in normalised units per year. Heterotrophic growth floor <code>g_floor</code> as a fraction of <code>gmax</code>. Wave height <code>H</code> in metres and peak period <code>T</code> in seconds. Angular frequency <code>omega = 2π/T</code> in s⁻¹. Wavenumber <code>k</code> in m⁻¹ from the dispersion relation. Gravitational acceleration <code>g</code> in m s⁻². Near bed orbital velocity <code>ub(z)</code> in m s⁻¹. Damage thresholds <code>ucrit_rubble</code>, <code>ucrit_break</code>, <code>ucrit_cat</code> in m s⁻¹. Transition steepness parameters <code>sigma_r</code>, <code>sigma_b</code>, <code>sigma_c</code> in m s⁻¹. Event rates <code>lambda_i</code> in events per year. Annual probabilities <code>P_rubble(z)</code>, <code>P_break(z)</code>, <code>P_cat(z)</code> are unitless. Loss severities <code>Mr</code>, <code>Mb</code>, <code>Mc</code> are unitless fractions of cover. Post-catastrophe recovery lag <code>lag</code> in years and growth during lag <code>g_lag</code> as a fraction of normal growth. Net recovery margin <code>R(z)</code> in the same normalised units as <code>gmax</code>.</p>
+
+          <p><strong>Light decay with depth.</strong> Daily light integral at depth is modelled as <code>DLI(z) = DLI0 × exp(-Kd × z)</code>. <code>DLI0</code> is the surface DLI representing the average daily PAR received, accounting for typical cloud cover and seasonal variation. <code>Kd</code> is the diffuse attenuation coefficient that captures water clarity. Lower <code>Kd</code> means clearer water, deeper light penetration. This exponential form (Beer-Lambert law) is well-established for broadband PAR in the ocean. Typical GBR surface DLI values range from 36–49 mol m⁻² d⁻¹ depending on region, with central GBR around 44–48 mol m⁻² d⁻¹.</p>
+
+          <p><strong>Growth response.</strong> Potential growth follows a saturating relationship with light: <code>g_photo(z) = gmax × DLI(z) / (DLI(z) + Ik)</code>. <code>Ik</code> is the half-saturation DLI—the light level where growth is half of <code>gmax</code>. GBR studies show strong Acropora growth at 12–16 mol m⁻² d⁻¹, with little additional benefit above this range. Using Ik ≈ 14 mol m⁻² d⁻¹ means growth approaches its maximum around this light level. To include non-photosynthetic feeding (heterotrophy) we add a floor, so actual potential growth becomes <code>g(z) = g_floor × gmax + (gmax - g_floor × gmax) × DLI(z) / (DLI(z) + Ik)</code>. This captures appreciable growth at moderate depths and saturation in shallow water.</p>
+
+          <p><strong>Storm kinematics and damage.</strong> Linear wave theory gives the dispersion relation <code>omega² = g × k × tanh(k × z)</code>, which we solve for <code>k</code> at each depth and period. The near bed orbital velocity magnitude is approximated by <code>ub(z) = (π × H / T) / sinh(k × z)</code>, which decays with depth. We compare <code>ub</code> to velocity thresholds. The probability that a given event causes damage is mapped with a logistic curve <code>p = 1 / (1 + exp(-(ub - ucrit) / sigma))</code>, where <code>sigma</code> sets the sharpness of the transition. With event rates <code>lambda_i</code> we compute annual probabilities using a Poisson process: <code>P(z) = 1 - exp(-sum_i lambda_i × p_i(z))</code>. Breakage is split into a non-catastrophic portion and a catastrophic portion by subtracting the catastrophic exceedance share.</p>
+
+          <p><strong>Catastrophic damage and recovery.</strong> A high threshold <code>ucrit_cat</code> with steepness <code>sigma_c</code> and severity <code>Mc</code> represents events that remove most cover and impose a recovery delay. If the rate of catastrophic events at a depth is <code>lambda_cat(z)</code> and the recovery lag is <code>lag</code> years, the expected fraction of time spent in the lag state is <code>phi(z) = (lambda_cat × lag) / (1 + lambda_cat × lag)</code>. During lag, potential growth is reduced to <code>g_lag</code> times its normal value. The effective growth is <code>g_eff(z) = g(z) × (1 - phi) + g(z) × g_lag × phi</code>. Expected loss combines categories as <code>loss(z) = Mr × P_rubble + Mb × P_break + Mc × P_cat</code>. The net margin is <code>R(z) = g_eff(z) - loss(z)</code>. As catastrophic frequency or lag grows, <code>phi</code> approaches one, suppressing recovery even if a severe event does not occur in the current year.</p>
+
+          <p><strong>Limitations.</strong> This is a toy model for exploring concepts, not a predictive tool. It does not include: spectral or directional waves, reef crest wave transformation, infragravity energy, wave-current interactions, topographic sheltering, internal waves, temperature/bleaching effects, sediment dynamics, recruitment supply or survival, larval connectivity, species-specific mechanics, or successional changes. The model also assumes constant conditions over time and does not capture interannual variability. Use this tool to explore sensitivity and to shape hypotheses, then move to more detailed models when you need predictions.</p>
+        </div>
+      </details>
+      <details class="model-notes">
+        <summary>Why does lambda = 1 not give annual probability = 1?</summary>
+        <div class="longform"><p>Event frequency uses a Poisson process. If the mean rate is <code>lambda = 1</code> event per year and an event, when it happens, certainly causes damage at a given depth, then the probability of at least one event in a year is <code>1 - exp(-lambda)</code>, which is approximately 0.632. To get close to certainty within a year you need <code>lambda</code> much larger than 1 or a deterministic annual event. The catastrophic lag captures that even without a new severe event, a recent one can keep the system in a suppressed state.</p></div>
+      </details>
+
+      <details class="model-notes">
+        <summary>Self tests</summary>
+        <div class="longform"><pre id="testOutput">Running...</pre></div>
+      </details>
+
+      <div class="foot">Tip: edit parameters and watch the thresholds cross the velocity curves. Try longer periods to see how exposure reaches deeper.</div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- Utility helpers ----------
+    // clamp: numeric clamp. Used sparingly to keep UI values in range.
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    // Shorthand for document.getElementById
+    const N = (id) => document.getElementById(id);
+
+    // All tweakable defaults are centralised here so the Reset button and
+    // documentation remain in sync.
+    const defaults = {
+      maxDepth: 35,
+      DLI0: 45,
+      Kd: 0.2,
+      KdT: 0.08,
+      Ik: 14,
+      gmax: 1.0,
+      gfloor: 0.05,
+      H1: 4.0, T1: 10.0, L1: 0.5,
+      H2: 6.0, T2: 12.0, L2: 0.2,
+      ucr: 0.4, sr: 0.2, Mr: 0.05,
+      ucb: 3.0, sb: 0.5, Mb: 0.6,
+      ucc: 5.0, sc: 0.6, Mc: 0.95,
+      lagY: 1.5, glag: 0.05,
+    };
+
+    /**
+     * Reset all inputs to defaults and render.
+     */
+    function setDefaults() {
+      for (const [k, v] of Object.entries(defaults)) N(k).value = v;
+      updateAll();
+    }
+
+    // ---------- Model maths ----------
+    // gConst: gravitational acceleration (m s^-2)
+    const gConst = 9.81;
+
+    /**
+     * Build a Float64Array of n values linearly spaced from a to b inclusive.
+     * @param {number} a - start value
+     * @param {number} b - end value
+     * @param {number} n - number of points
+     * @returns {Float64Array}
+     */
+    function linspace(a, b, n) {
+      const arr = new Float64Array(n);
+      const step = (b - a) / (n - 1);
+      for (let i = 0; i < n; i++) arr[i] = a + step * i;
+      return arr;
+    }
+
+    /**
+     * Solve the dispersion relation omega^2 = g k tanh(k h) for wavenumber k
+     * using Newton iterations at each depth h.
+     * Inputs: period T (s), depth array h (m).
+     * Returns: k (m^-1) for each depth.
+     */
+    function solveK(T, h) {
+      const w = 2 * Math.PI / T; // angular frequency omega
+      const n = h.length; const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let k = (w*w)/gConst; // deep water initial guess
+        const depth = h[i];
+        for (let it = 0; it < 50; it++) {
+          const kh = k * depth;
+          const tanh = Math.tanh(kh);
+          const f = gConst * k * tanh - w*w;
+          const df = gConst * tanh + gConst * kh * (1 - tanh*tanh);
+          const step = f / df;
+          k -= step;
+          if (Math.abs(step) < 1e-9) break;
+        }
+        out[i] = k;
+      }
+      return out;
+    }
+
+    /**
+     * Compute near bed orbital velocity magnitude profile.
+     * ub(z) = (pi * H / T) / sinh(k * z), where k solves dispersion.
+     * Inputs: H (m), T (s), depth array z (m).
+     * Returns: ub (m s^-1) array.
+     */
+    function ubProfile(H, T, depth) {
+      const k = solveK(T, depth);
+      const out = new Float64Array(depth.length);
+      const factor = Math.PI * H / T;
+      for (let i = 0; i < depth.length; i++) {
+        const kh = k[i] * depth[i];
+        const denom = Math.sinh(kh);
+        out[i] = denom === 0 ? 0 : factor / denom;
+      }
+      return out;
+    }
+
+    /**
+     * Logistic exceedance function mapping ub to event damage probability.
+     * p = 1 / (1 + exp(-(ub - ucrit) / sigma))
+     * Inputs in m s^-1. sigma controls transition steepness.
+     */
+    function logisticExceed(ub, ucrit, sigma) {
+      const out = new Float64Array(ub.length);
+      for (let i = 0; i < ub.length; i++) {
+        out[i] = 1 / (1 + Math.exp(-(ub[i] - ucrit) / sigma));
+      }
+      return out;
+    }
+
+    /**
+     * Evaluate exp(-coef * a) element wise.
+     * Used for I(z) = I0 * exp(-Kd * z).
+     */
+    function expArr(a, coef) {
+      const out = new Float64Array(a.length);
+      for (let i = 0; i < a.length; i++) out[i] = Math.exp(-coef * a[i]);
+      return out;
+    }
+
+    /**
+     * Combine per event rates into an annual probability using a Poisson model.
+     * If arrays L_i(z) = lambda_i * p_i(z) are provided, return
+     * P(z) = 1 - exp(-sum_i L_i(z)).
+     */
+    function combinePoisson(lambdas) {
+      const n = lambdas[0].length; const out = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let sum = 0; for (let j = 0; j < lambdas.length; j++) sum += lambdas[j][i];
+        out[i] = 1 - Math.exp(-sum);
+      }
+      return out;
+    }
+
+    /**
+     * Saturating P - I growth with a heterotrophic floor.
+     * g = g_floor + (gmax - g_floor) * I / (I + Ik).
+     * Inputs: I (same units as I0), gmax (per year, normalised), Ik, g_floor.
+     */
+    function growthFromLight(I, gmax, Ik, gfloor) {
+      const out = new Float64Array(I.length);
+      for (let i = 0; i < I.length; i++) {
+        const frac = I[i] / (I[i] + Ik);
+        out[i] = gfloor + (gmax - gfloor) * frac;
+      }
+      return out;
+    }
+
+    /**
+     * Multiply an array by a scalar, returning a new Float64Array.
+     */
+    function scale(arr, s) {
+      const out = new Float64Array(arr.length);
+      for (let i = 0; i < arr.length; i++) out[i] = arr[i] * s;
+      return out;
+    }
+
+    // ---------- Plotting with inline SVG ----------
+    /**
+     * Minimal SVG plotting helper. Creates axes and plots one or more series.
+     * Returns an object with a draw(series, xdom, ydom, xlabel, ylabel) method.
+     * series is an array of {x: Float64Array, y: Float64Array, color: string,
+     *                        width?: number, hline?: number }.
+     */
+    function makePlot(svgId) {
+      const svg = document.getElementById(svgId);
+      // Measure the container to set a concrete viewBox. This avoids a 0 size
+      // race at first layout and keeps SVG crisp on resize.
+      const parent = svg.parentElement;
+      const prect = parent.getBoundingClientRect();
+      let W = Math.max(320, (prect.width || svg.clientWidth || 800));
+      let H = Math.max(220, (prect.height || svg.clientHeight || 300));
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('width', W);
+      svg.setAttribute('height', H);
+      svg.innerHTML = '';
+      const padL = 50, padR = 50, padT = 8, padB = 36;
+      const grid = document.createElementNS('http://www.w3.org/2000/svg','g');
+      grid.setAttribute('class','grid');
+      svg.appendChild(grid);
+      const axis = document.createElementNS('http://www.w3.org/2000/svg','g');
+      axis.setAttribute('class','axis');
+      svg.appendChild(axis);
+      const draw = (series, xdom, ydom, xlabel, ylabel, ydom2, ylabel2) => {
+        const gx = 6, gy = 5;
+        for (let i = 0; i <= gx; i++) {
+          const x = padL + (W - padL - padR) * i / gx;
+          const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+          ln.setAttribute('x1', x); ln.setAttribute('y1', padT);
+          ln.setAttribute('x2', x); ln.setAttribute('y2', H - padB);
+          grid.appendChild(ln);
+        }
+        for (let j = 0; j <= gy; j++) {
+          const y = padT + (H - padT - padB) * j / gy;
+          const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+          ln.setAttribute('x1', padL); ln.setAttribute('y1', y);
+          ln.setAttribute('x2', W - padR); ln.setAttribute('y2', y);
+          grid.appendChild(ln);
+        }
+        const axX = document.createElementNS('http://www.w3.org/2000/svg','line');
+        axX.setAttribute('x1', padL); axX.setAttribute('y1', H - padB);
+        axX.setAttribute('x2', W - padR); axX.setAttribute('y2', H - padB);
+        axis.appendChild(axX);
+        const axY = document.createElementNS('http://www.w3.org/2000/svg','line');
+        axY.setAttribute('x1', padL); axY.setAttribute('y1', padT);
+        axY.setAttribute('x2', padL); axY.setAttribute('y2', H - padB);
+        axis.appendChild(axY);
+        // Secondary Y-axis on right (if ydom2 provided)
+        if (ydom2) {
+          const axY2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+          axY2.setAttribute('x1', W - padR); axY2.setAttribute('y1', padT);
+          axY2.setAttribute('x2', W - padR); axY2.setAttribute('y2', H - padB);
+          axis.appendChild(axY2);
+        }
+        const xTicks = gx; const yTicks = gy;
+        const xfmt = (v)=> v.toFixed(0);
+        const yfmt = (v)=> Math.abs(ydom[1]) >= 1000 ? (v/1000).toFixed(1)+"k" : v.toFixed(2);
+        for (let i = 0; i <= xTicks; i++) {
+          const v = xdom[0] + (xdom[1]-xdom[0])*i/xTicks;
+          const x = padL + (W - padL - padR) * i / xTicks;
+          const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+          t.setAttribute('x', x); t.setAttribute('y', H - padB + 18); t.setAttribute('text-anchor','middle');
+          t.textContent = xfmt(v);
+          axis.appendChild(t);
+        }
+        for (let i = 0; i <= yTicks; i++) {
+          const v = ydom[0] + (ydom[1]-ydom[0])*i/yTicks;
+          const y = padT + (H - padT - padB) * (1 - i / yTicks);
+          const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+          t.setAttribute('x', padL - 6); t.setAttribute('y', y + 4); t.setAttribute('text-anchor','end');
+          t.textContent = yfmt(v);
+          axis.appendChild(t);
+        }
+        // Secondary Y-axis ticks on right
+        if (ydom2) {
+          const yfmt2 = (v)=> v.toFixed(2);
+          for (let i = 0; i <= yTicks; i++) {
+            const v = ydom2[0] + (ydom2[1]-ydom2[0])*i/yTicks;
+            const y = padT + (H - padT - padB) * (1 - i / yTicks);
+            const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+            t.setAttribute('x', W - padR + 6); t.setAttribute('y', y + 4); t.setAttribute('text-anchor','start');
+            t.textContent = yfmt2(v);
+            axis.appendChild(t);
+          }
+        }
+        const xlabelEl = document.createElementNS('http://www.w3.org/2000/svg','text');
+        xlabelEl.setAttribute('x', (W)/2); xlabelEl.setAttribute('y', H - 6); xlabelEl.setAttribute('text-anchor','middle');
+        xlabelEl.setAttribute('class','axis-label');
+        xlabelEl.textContent = xlabel; svg.appendChild(xlabelEl);
+        const ylabelEl = document.createElementNS('http://www.w3.org/2000/svg','text');
+        ylabelEl.setAttribute('transform', `rotate(-90 ${14} ${(H - padB)/2})`);
+        ylabelEl.setAttribute('x', 14); ylabelEl.setAttribute('y', (H - padB)/2);
+        ylabelEl.setAttribute('class','axis-label');
+        ylabelEl.textContent = ylabel; svg.appendChild(ylabelEl);
+        // Secondary Y-axis label on right
+        if (ydom2 && ylabel2) {
+          const ylabel2El = document.createElementNS('http://www.w3.org/2000/svg','text');
+          ylabel2El.setAttribute('transform', `rotate(90 ${W - 14} ${(H - padB)/2})`);
+          ylabel2El.setAttribute('x', W - 14); ylabel2El.setAttribute('y', (H - padB)/2);
+          ylabel2El.setAttribute('class','axis-label');
+          ylabel2El.textContent = ylabel2; svg.appendChild(ylabel2El);
+        }
+        const sx = (v) => padL + (W - padL - padR) * (v - xdom[0]) / (xdom[1] - xdom[0]);
+        const sy = (v) => padT + (H - padT - padB) * (1 - (v - ydom[0]) / (ydom[1] - ydom[0]));
+        const sy2 = ydom2 ? (v) => padT + (H - padT - padB) * (1 - (v - ydom2[0]) / (ydom2[1] - ydom2[0])) : sy;
+        const colors = ["#7cc8ff", "#ffd166", "#ef476f", "#06d6a0", "#a78bfa", "#f7a072"];
+        series.forEach((s, idx) => {
+          const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+          let d = '';
+          const scaleY = s.useSecondaryAxis && ydom2 ? sy2 : sy;
+          for (let i = 0; i < s.x.length; i++) {
+            const x = sx(s.x[i]); const y = scaleY(s.y[i]);
+            d += (i === 0 ? 'M' : 'L') + x + ' ' + y + ' ';
+          }
+          path.setAttribute('d', d.trim());
+          path.setAttribute('fill','none');
+          path.setAttribute('stroke', s.color || colors[idx % colors.length]);
+          path.setAttribute('stroke-width', s.width || 2);
+          svg.appendChild(path);
+          if (s.hline !== undefined) {
+            const y = sy(s.hline);
+            const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+            ln.setAttribute('x1', padL); ln.setAttribute('x2', W - padR);
+            ln.setAttribute('y1', y); ln.setAttribute('y2', y);
+            ln.setAttribute('stroke', s.color || colors[idx % colors.length]);
+            ln.setAttribute('stroke-dasharray', '6 6');
+            ln.setAttribute('stroke-width', 1.5);
+            svg.appendChild(ln);
+          }
+        });
+      };
+      return { draw };
+    }
+
+    /** Create a legend box inside a .legend element. */
+    function makeLegend(elId, items) {
+      const el = document.getElementById(elId);
+      el.innerHTML = '';
+      items.forEach(it => {
+        const row = document.createElement('div'); row.className = 'item';
+        const sw = document.createElement('span'); sw.className = 'swatch'; sw.style.background = it.color; row.appendChild(sw);
+        const tx = document.createElement('span'); tx.textContent = it.label; row.appendChild(tx);
+        el.appendChild(row);
+      });
+    }
+
+    /** Export the current arrays to a CSV file for offline analysis. */
+    function downloadCSV(data, filename) {
+      const header = Object.keys(data).join(',') + '\n';
+      const n = data.depth_m.length;
+      let rows = '';
+      for (let i = 0; i < n; i++) {
+        const vals = Object.keys(data).map(k => data[k][i]);
+        rows += vals.join(',') + '\n';
+      }
+      const blob = new Blob([header + rows], {type: 'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    /**
+     * Compute all arrays for the current inputs and render the four plots.
+     * Side effects: updates window.currentData used by the Export button.
+     */
+    function updateAll() {
+      const maxDepth = +N('maxDepth').value;
+      const z = linspace(1, maxDepth, Math.max(50, Math.round(maxDepth*10)));
+
+      // Light and growth inputs
+      const DLI0 = +N('DLI0').value;   // surface DLI (mol m^-2 d^-1)
+      const Kd = +N('Kd').value;   // clear water attenuation
+      const KdT = +N('KdT').value; // turbid water attenuation
+      const Ik = +N('Ik').value;   // half saturation DLI
+      const gmax = +N('gmax').value;  // normalised max annual growth
+      const gfloor = +N('gfloor').value * gmax; // convert fraction to absolute units
+
+      // Wave and event inputs
+      const H1 = +N('H1').value, T1 = +N('T1').value, L1 = +N('L1').value; // moderate
+      const H2 = +N('H2').value, T2 = +N('T2').value, L2 = +N('L2').value; // severe
+      const ucr = +N('ucr').value, sr = +N('sr').value, Mr = +N('Mr').value; // rubble
+      const ucb = +N('ucb').value, sb = +N('sb').value, Mb = +N('Mb').value; // breakage
+      const ucc = +N('ucc').value, sc = +N('sc').value, Mc = +N('Mc').value; // catastrophic
+      const lagY = +N('lagY').value; const glag = +N('glag').value;          // recovery lag
+
+      // Light and growth profiles
+      const DLI_clear = scale(expArr(z, Kd), DLI0);
+      const DLI_turbid = scale(expArr(z, KdT), DLI0);
+      const g_clear = growthFromLight(DLI_clear, gmax, Ik, gfloor);
+      const g_turbid = growthFromLight(DLI_turbid, gmax, Ik, gfloor);
+
+      // Near bed orbital velocity for each representative event
+      const ub1 = ubProfile(H1, T1, z);
+      const ub2 = ubProfile(H2, T2, z);
+
+      // Per event probabilities for each impact type
+      const p1_rub = logisticExceed(ub1, ucr, sr);
+      const p1_brk = logisticExceed(ub1, ucb, sb);
+      const p1_cat = logisticExceed(ub1, ucc, sc);
+      const p2_rub = logisticExceed(ub2, ucr, sr);
+      const p2_brk = logisticExceed(ub2, ucb, sb);
+      const p2_cat = logisticExceed(ub2, ucc, sc);
+
+      // Annual probabilities using Poisson thinning
+      const P_rubble = combinePoisson([scale(p1_rub, L1), scale(p2_rub, L2)]);
+      // Avoid double counting by splitting breakage into non catastrophic vs catastrophic
+      const p1_brk_only = new Float64Array(p1_brk.length);
+      const p2_brk_only = new Float64Array(p2_brk.length);
+      for (let i = 0; i < p1_brk_only.length; i++) {
+        p1_brk_only[i] = Math.max(0, p1_brk[i] - p1_cat[i]);
+        p2_brk_only[i] = Math.max(0, p2_brk[i] - p2_cat[i]);
+      }
+      const P_break  = combinePoisson([scale(p1_brk_only, L1), scale(p2_brk_only, L2)]);
+      const P_cat    = combinePoisson([scale(p1_cat, L1), scale(p2_cat, L2)]);
+
+      // Expected fraction of time in the suppressed recovery state after catastrophes
+      const rate_cat = new Float64Array(P_cat.length);
+      for (let i = 0; i < rate_cat.length; i++) rate_cat[i] = L1 * p1_cat[i] + L2 * p2_cat[i];
+      const phiLag = new Float64Array(rate_cat.length);
+      for (let i = 0; i < rate_cat.length; i++) phiLag[i] = (rate_cat[i] * lagY) / (1 + rate_cat[i] * lagY);
+
+      // Expected loss and net recovery margin
+      const loss = new Float64Array(z.length);
+      const R_clear = new Float64Array(z.length);
+      const R_turbid = new Float64Array(z.length);
+      for (let i = 0; i < z.length; i++) {
+        const g_clear_eff = g_clear[i] * (1 - phiLag[i]) + g_clear[i] * glag * phiLag[i];
+        const g_turbid_eff = g_turbid[i] * (1 - phiLag[i]) + g_turbid[i] * glag * phiLag[i];
+        const loss_i = Mr * P_rubble[i] + Mb * P_break[i] + Mc * P_cat[i];
+        loss[i] = loss_i;
+        R_clear[i] = g_clear_eff - loss_i;
+        R_turbid[i] = g_turbid_eff - loss_i;
+      }
+
+      // Plot 1 - Light and growth with dual Y-axes
+      const y1max_DLI = Math.max(...DLI_clear, ...DLI_turbid);
+      const y1max_growth = Math.max(...g_clear, ...g_turbid);
+      const plt1 = makePlot('svg1');
+      plt1.draw([
+        {x: z, y: DLI_clear, color: '#7cc8ff', useSecondaryAxis: false},
+        {x: z, y: DLI_turbid, color: '#ffd166', useSecondaryAxis: false},
+        {x: z, y: g_clear, color: '#0352fc', useSecondaryAxis: true},
+        {x: z, y: g_turbid, color: '#ef476f', useSecondaryAxis: true}
+      ], [1, maxDepth], [0, y1max_DLI*1.05], 'Depth (m)', 'DLI (mol m⁻² d⁻¹)', [0, y1max_growth*1.05], 'Growth');
+      makeLegend('leg1', [
+        {label: 'DLI, clear water', color: '#7cc8ff'},
+        {label: 'DLI, turbid water', color: '#ffd166'},
+        {label: 'Growth, clear', color: '#0352fc'},
+        {label: 'Growth, turbid', color: '#ef476f'}
+      ]);
+
+      // Plot 2 - Near bed orbital velocity and thresholds
+      const y2max = Math.max(...ub1, ...ub2, ucr, ucb);
+      const plt2 = makePlot('svg2');
+      plt2.draw([
+        {x: z, y: ub1, color: '#7cc8ff'},
+        {x: z, y: ub2, color: '#a78bfa'},
+        {x: [1, maxDepth], y: [ucr, ucr], color: '#ffd166', hline: ucr},
+        {x: [1, maxDepth], y: [ucb, ucb], color: '#ef476f', hline: ucb}
+      ], [1, maxDepth], [0, y2max*1.05], 'Depth (m)', 'Near bed orbital velocity (m s^-1)');
+      makeLegend('leg2', [
+        {label: 'u_b, moderate storm', color: '#7cc8ff'},
+        {label: 'u_b, severe cyclone', color: '#a78bfa'},
+        {label: 'Rubble threshold', color: '#ffd166'},
+        {label: 'Breakage threshold', color: '#ef476f'}
+      ]);
+
+      // Plot 3 - Annual probabilities of impact
+      const y3max = Math.max(...P_rubble, ...P_break, ...P_cat);
+      const plt3 = makePlot('svg3');
+      plt3.draw([
+        {x: z, y: P_rubble, color: '#ffd166'},
+        {x: z, y: P_break, color: '#ef476f'},
+        {x: z, y: P_cat, color: '#a78bfa'}
+      ], [1, maxDepth], [0, Math.max(0.01, y3max)*1.05], 'Depth (m)', 'Annual probability');
+      makeLegend('leg3', [
+        {label: 'P(rubble motion)', color: '#ffd166'},
+        {label: 'P(breakage, non catastrophic)', color: '#ef476f'},
+        {label: 'P(catastrophic)', color: '#a78bfa'}
+      ]);
+
+      // Plot 4 - Net recovery margin
+      const ymaxR = Math.max(...R_clear, ...R_turbid, 0);
+      const yminR = Math.min(...R_clear, ...R_turbid, 0);
+      const plt4 = makePlot('svg4');
+      plt4.draw([
+        {x: z, y: R_clear, color: '#0352fc'},
+        {x: z, y: R_turbid, color: '#ef476f'},
+        {x: [1, maxDepth], y: [0,0], color: '#a7b0d6', hline: 0}
+      ], [1, maxDepth], [yminR*1.05, ymaxR*1.05], 'Depth (m)', 'Net recovery margin');
+      makeLegend('leg4', [
+        {label: 'R(z), clear water', color: '#0352fc'},
+        {label: 'R(z), turbid water', color: '#ef476f'}
+      ]);
+
+      // Expose a tidy dataset for CSV export.
+      window.currentData = {
+        depth_m: z,
+        DLI_clear, DLI_turbid,
+        growth_clear: g_clear,
+        growth_turbid: g_turbid,
+        ub_moderate: ub1,
+        ub_severe: ub2,
+        P_rubble: P_rubble,
+        P_break: P_break,
+        P_cat: P_cat,
+        phi_lag: phiLag,
+        expected_loss: loss,
+        R_clear: R_clear,
+        R_turbid: R_turbid
+      };
+    }
+
+    // ---------- Self tests ----------
+    // Simple runtime checks that document the intended behaviour. These do not
+    // throw on failure, they just report to the console and to the Self tests panel.
+    function runSelfTests() {
+      const lines = [];
+      const append = (msg) => lines.push(msg);
+      const approx = (a,b,eps=1e-3)=> Math.abs(a-b) < eps;
+
+      // Test 1: Poisson with lambda = 1 should give 1 - exp(-1)
+      const arr1 = new Float64Array([1]);
+      const pYear = combinePoisson([arr1])[0];
+      append(`Test Poisson lambda=1: got ${pYear.toFixed(3)}, expect ${(1-Math.exp(-1)).toFixed(3)} -> ${approx(pYear, 1-Math.exp(-1)) ? 'PASS' : 'FAIL'}`);
+
+      // Test 2: Catastrophic lag fraction phi with lambda=1 and lag=1 is 0.5
+      const lambdaCat = 1.0, lagY = 1.0;
+      const phi = (lambdaCat * lagY) / (1 + lambdaCat * lagY);
+      append(`Test lag phi with lambda=1, lag=1: got ${phi.toFixed(3)}, expect 0.500 -> ${approx(phi,0.5)?'PASS':'FAIL'}`);
+
+      // Test 3: ub decreases with depth for a fixed H, T
+      const depths = new Float64Array([1, 10]);
+      const ub = ubProfile(6, 12, depths);
+      append(`Test ub monotonic: ub(1m)=${ub[0].toFixed(3)} > ub(10m)=${ub[1].toFixed(3)} -> ${(ub[0] > ub[1]) ? 'PASS' : 'FAIL'}`);
+
+      // Test 4: Logistic exceedance crosses 0.5 near ucrit
+      const le = logisticExceed(new Float64Array([0.1, 10]), 1.0, 0.2);
+      append(`Test logistic bounds: low=${le[0].toFixed(3)}, high=${le[1].toFixed(3)} -> ${(le[0] < 0.5 && le[1] > 0.5) ? 'PASS' : 'FAIL'}`);
+
+      // Test 5: Light at z=0 equals DLI0, and growth at DLI=0 equals gfloor
+      const z0 = new Float64Array([0]);
+      const DLI0arr = scale(expArr(z0, 0.1), 45);
+      append(`Test DLI(z=0)=DLI0: got ${DLI0arr[0].toFixed(1)}, expect 45.0 -> ${approx(DLI0arr[0],45)?'PASS':'FAIL'}`);
+      const g0 = growthFromLight(new Float64Array([0]), 1.0, 100, 0.1);
+      append(`Test growth floor at I=0: got ${g0[0].toFixed(2)}, expect 0.10 -> ${approx(g0[0],0.10)?'PASS':'FAIL'}`);
+
+      // Test 6: Poisson with a very large lambda approaches 1
+      const big = combinePoisson([new Float64Array([10])])[0];
+      append(`Test Poisson large lambda: got ${big.toFixed(3)}, expect ~1.000 -> ${(big > 0.999)?'PASS':'FAIL'}`);
+
+      const outEl = document.getElementById('testOutput');
+      if (outEl) outEl.textContent = lines.join('\n');
+      console.log(lines.join('\n'));
+    }
+
+    // Wire inputs
+    Array.from(document.querySelectorAll('#controls input')).forEach(inp => {
+      inp.addEventListener('input', updateAll);
+      inp.addEventListener('change', updateAll);
+    });
+
+    // Buttons
+    document.getElementById('resetBtn').addEventListener('click', setDefaults);
+    document.getElementById('csvBtn').addEventListener('click', () => downloadCSV(window.currentData, 'depth_resilience_outputs.csv'));
+
+    // Init
+    const start = () => { setDefaults(); requestAnimationFrame(updateAll); runSelfTests(); };
+    document.addEventListener('DOMContentLoaded', start);
+    window.addEventListener('load', updateAll);
+    window.addEventListener('resize', () => { requestAnimationFrame(updateAll); });
+  </script>
+</body>
+</html>
