@@ -1,10 +1,16 @@
-# README
+# Interactive toy model: Are deep reefs protected from wave damage?
 
-This is a toy model focused on the interaction between light levels at depth and damage from wave energy. It does not consider the effects of bleaching, or the full complexities of coral reefs. It combines the relevant effects (wave damage, and coral growth) as expectation values, giving an estimated coral density under the specified conditions averaged over all time. This model does not model time series, but analytically combines the relative effects as scalar modifiers. 
+This is a toy model focused on the interaction between light levels at depth and damage from wave energy. 
 
 This model was intended to explore the question of: Do deeper reefs provide a refugia from disturbances, particularly cyclones and wave damage?
 
+The interactive model is available from:
+https://open-aims.github.io/corals-at-depth-interactive-toy-model/ 
+
 If you have queries about this model please contact Eric Lawrey (e.lawrey@aims.gov.au).
+
+## Limitations
+It does not consider the effects of bleaching, or the full complexities of coral reefs. It combines the relevant effects (wave damage, and coral growth) as expectation values, giving an estimated coral density under the specified conditions averaged over all time. This model does not model time series, but analytically combines the relative effects as scalar modifiers. 
 
 ## WARNING: 
 Most of the documentation, research and coding needed for the implementation of this model was performed by ChatGPT GPT-5 and Claude Opus 4.5 (DLI). This document is a record of the designed state of the model after the implementation of the interactive coral-depth-resilience app. The development of this model was done through an iterative process to establish the design of the model, its implementation and then generation of the documentation provided below. While this application was not implemented from start to end by AI, only a light level of human review have been performed on all the design decisions. The text below is a description of the model. DO NOT trust the text at face value. DO NOT assume that each model design choice is the best. While there was some explicit research into typical values to place into each model parameter an extensive literature review has not been conducted into all model parameters and model mathematics. 
