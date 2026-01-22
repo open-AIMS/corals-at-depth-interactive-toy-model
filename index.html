@@ -89,20 +89,20 @@
       <div class="group">
         <h3>Depth range</h3>
         <div class="ctrl"><label for="maxDepth">Maximum depth (m)</label><input id="maxDepth" type="number" step="1" min="5" max="80" value="35"></div>
-        <p class="hint">Sets the x axis range for all plots. Typical surveyable fore reef depths are 20 to 40 m.</p>
+        <p class="hint">Sets the x axis range for all plots. The model is designed for 2 to 40 m depths.</p>
       </div>
 
       <div class="group">
         <h3>Light and growth</h3>
-        <p class="hint">More light increases coral growth, up to a point (determined by half-saturation). Turbid waters decrease the available light (Kd turbid). We model two scenarios, clear and turbid for comparison. The growth is supplemented by heterotrophic growth. This model assumes annual average light conditions.</p>
+        <p class="hint">More light increases coral growth, up to a point (determined by half-saturation). Turbid waters decrease the available light (Kd turbid). We model two scenarios, clear and turbid for comparison. The growth is supplemented by heterotrophic growth. This model assumes annual average light conditions. See <a href=https://ereefs.aims.gov.au/gbr4/bgc/baseline/secchi_kd-490_epipar-sg/#region=central-2;frame=Yearly">eReefs BGC model</a> for typical Vertical attenuation and Light intensity values.</p>
         <div class="ctrl"><label for="DLI0">Surface DLI (mol m⁻² d⁻¹)</label><input id="DLI0" type="number" step="1" min="10" max="60" value="45"></div>
-        <p class="hint">Meaning: Daily Light Integral at the surface, representing the total photosynthetically active radiation received per day averaged over the year. This value should account for typical cloud cover. GBR typical values range from 36–49 mol m⁻² d⁻¹ depending on region and season. Reduce this value for cloudier regions or seasons.</p>
+        <p class="hint">Meaning: Daily Light Integral at the surface, representing the total photosynthetically active radiation received per day averaged over the year. This value should account for typical cloud cover. GBR typical values range from 36–49 mol m⁻² d⁻¹ depending on region and season. Reduce this value for cloudier regions or years.</p>
 
         <div class="ctrl"><label for="Kd">Kd clear (m⁻¹)</label><input id="Kd" type="number" step="0.01" min="0.03" max="0.30" value="0.08"></div>
-        <p class="hint">Meaning: diffuse attenuation coefficient for relatively clear oceanic water. Typical 0.05 to 0.10 m⁻¹ offshore.</p>
+        <p class="hint">Meaning: Diffuse attenuation coefficient for relatively clear oceanic water. Expressed as the exponential rate of light loss per metre. See <a href = "https://ereefs.aims.gov.au/gbr4/bgc/baseline/secchi_kd-490_epipar-sg/#frame=Yearly;region=central-2">eReefs BGC</a> for typical values. Typical 0.05 to 0.10 m⁻¹ offshore.</p>
 
         <div class="ctrl"><label for="KdT">Kd turbid (m⁻¹)</label><input id="KdT" type="number" step="0.01" min="0.08" max="0.60" value="0.20"></div>
-        <p class="hint">Meaning: diffuse attenuation for turbid shelf water. Typical 0.15 to 0.40 m⁻¹ on nearshore reefs.</p>
+        <p class="hint">Meaning: Diffuse attenuation for turbid shelf water scenario. Typical 0.15 to 0.40 m⁻¹ on nearshore reefs.</p>
 
         <div class="ctrl"><label for="Ik">Half-saturation Ik (mol m⁻² d⁻¹)</label><input id="Ik" type="number" step="1" min="4" max="25" value="14"></div>
         <p class="hint">Meaning: DLI where coral growth is half of maximum. Based on GBR Acropora studies showing strong growth at 12–16 mol m⁻² d⁻¹. Using ~14 as half-saturation means growth approaches maximum around this range.</p>
