@@ -274,8 +274,6 @@ Putting the above together gives defensible defaults and ranges that match the p
 
 Beer - Lambert gives a physically grounded, one-parameter map from depth to usable light. P–I relationships specific to corals then translate that light into a potential growth rate, while a small heterotrophic floor acknowledges real mixotrophy. Linear wave theory gives you the correct depth-dependence of near-bed orbital motion for specified sea states, and empirical rubble and biomechanical studies justify mapping near-bed velocity to probabilities of rubble transport and whole-colony failure. A Poisson arrival framework ties event rates to annual probabilities without overcounting, and a simple availability-style lag term captures the very real phenomenon that catastrophic damage suppresses recovery for months to years even if the next year is calm. The result is a transparent scaffold where each term and parameter can be traced to first principles or an explicit open paper.
 
-If you want, I can fold these references into the README in a “Sources and defaults” appendix, with sentence-level citations beside each parameter so future readers know exactly where each number and equation came from.
-
 [1]: https://oceancolor.gsfc.nasa.gov/reprocessing/r2000/seawifs/11-Chapt3.pdf "PLVol11.tex"
 [2]: https://ecophys.utah.edu/uploads/3/1/8/3/31835701/413.pdf "Photosynthesis: Physiological and Ecological Considerations"
 [3]: https://www.sciencedirect.com/science/article/pii/S0025326X14004810 "Resilience of branching and massive corals to wave loading under sea ..."
